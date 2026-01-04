@@ -46,21 +46,21 @@ pip install -e .
 
 ## Usage
 
-Run the command followed by your media directory and audio directory:
+Run the command followed by your media directory and audios directory:
 
 ```bash
-photo-slideshow /path/to/media/files /path/to/audio/files
+photo-slideshow /path/to/media/files /path/to/audios/files
 ```
 
 ### Quick Demo
 You can test the tool using the provided example resources:
 ```bash
-photo-slideshow photos audio
+photo-slideshow photos audios
 ```
 
 ### Arguments
 - `<media_dir>`: Directory containing `.jpg`, `.jpeg` images and `.mp4`, `.mov` videos. (e.g., the `./photos` directory).
-- `<audio_dir>`: Directory containing `.mp3` files for background music. (e.g., the `./audio` directory).
+- `<audio_dir>`: Directory containing `.mp3` files for background music. (e.g., the `./audios` directory).
 
 ## Output
 The script generates:
