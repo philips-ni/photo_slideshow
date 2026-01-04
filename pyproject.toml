@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo_slideshow"
+version = "0.0.1"
+description = "A CLI tool to create 8K video slideshows from photos and videos."
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = []
+
+[project.scripts]
+photo-slideshow = "photo_slideshow.to_slide_show:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
