@@ -2,6 +2,10 @@ import sys
 import os
 import subprocess
 import random
+import argparse
+import concurrent.futures
+import shutil
+import shlex
 
 TIME_GAP = 5
 DURATION = 0.5
@@ -11,11 +15,20 @@ FADE_OUT_LEN = 5
 
 def run_os_command(cmd):
     # print(cmd)
-    useless_cat_call = subprocess.run(["/bin/bash"],
-                                      stdout=subprocess.PIPE,
-                                      text=True,
-                                      input=cmd)
-    return useless_cat_call.returncode, useless_cat_call.stdout
+    # Split command string into list for cross-platform compatibility
+    # Windows compatibility note: shell=False is generally safer and better, 
+    # but exact command parsing might vary. shlex handles POSIX style.
+    try:
+        args = shlex.split(cmd)
+        # Check if running on Windows to handle specific command nuances if needed,
+        # but for ffmpeg/convert usually straightforward args work.
+        result = subprocess.run(args,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, # Capture stderr as well for debugging
+                                text=True)
+        return result.returncode, result.stdout + result.stderr
+    except Exception as e:
+        return -1, str(e)
 
 
 def pick_audio(audio_dir):
@@ -62,7 +75,7 @@ def parse_exif(exif_str):
 
 
 def get_exif_label(photo_path):
-    cmd = f"identify -format '%[EXIF:*]' {photo_path}"
+    cmd = f"identify -format '%[EXIF:*]' \"{photo_path}\""
     retcode, exif_str = run_os_command(cmd)
     exif_label = ""
     if retcode == 0:
@@ -70,11 +83,21 @@ def get_exif_label(photo_path):
     return exif_label
 
 def get_photo_resolution(photo_path):
-    cmd = f"convert {photo_path} -print '%w:%h' /dev/null"
+    cmd = f"convert \"{photo_path}\" -print '%w:%h' /dev/null"
     retcode, ret_str = run_os_command(cmd)
     if retcode == 0:
-        width,height = ret_str.split(':')
-        return width,height
+        # Output might contain other info, split by whitespace first if needed, 
+        # but here we expect just resolution or error. 
+        # On some systems convert might output warnings to stdout/stderr.
+        # We try to find the w:h pattern.
+        lines = ret_str.strip().splitlines()
+        if lines:
+            # simple attempt to grab the last line or the one looking like w:h
+            last_line = lines[-1] 
+            if ':' in last_line:
+                 width,height = last_line.split(':')
+                 return width,height
+        return "0","0" # Fallback
     else:
         raise Exception(f"Failed to get resolution for {photo_path}, error: {ret_str}")
 #
@@ -84,7 +107,8 @@ def add_meta(photo_path, new_photo_path):
     _, height = get_photo_resolution(photo_path)
     y_offset = int(0.47 * int(height))
     point_size = int(y_offset / 30)
-    cmd = f"""convert {photo_path} -font helvetica -fill white -pointsize {point_size} -gravity center -draw "text 0,{y_offset} '{label}'" {new_photo_path}"""
+    # Use single quotes for the label text to avoid shell expansion issues
+    cmd = f"""convert \"{photo_path}\" -font helvetica -fill white -pointsize {point_size} -gravity center -draw "text 0,{y_offset} '{label}'" \"{new_photo_path}\""""
     print(cmd)
     run_os_command(cmd)
 
@@ -94,7 +118,7 @@ def get_video_duration(video_path):
     retcode, duration_str = run_os_command(cmd)
     if retcode == 0 and duration_str.strip():
         try:
-            return float(duration_str)
+            return float(duration_str.strip())
         except ValueError:
             print(f"Warning: Could not parse duration from ffprobe output: {duration_str}")
             return 0
@@ -104,16 +128,12 @@ def get_video_duration(video_path):
 
 def attach_audio(video_path, audio_path, total_len):
     fade_out_start = total_len - FADE_OUT_LEN
-    cmd_str = f"ffmpeg -i {video_path} -stream_loop -1 -i \"{audio_path}\" -c:v copy -map 0:v -map 1:a -c:a aac -ac 2 -af \"afade=t=out:st={fade_out_start}:d={FADE_OUT_LEN}\" -shortest -y {OUTPUT_AUDIO_MP4}"
+    cmd_str = f"ffmpeg -i \"{video_path}\" -stream_loop -1 -i \"{audio_path}\" -c:v copy -map 0:v -map 1:a -c:a aac -ac 2 -af \"afade=t=out:st={fade_out_start}:d={FADE_OUT_LEN}\" -shortest -y \"{OUTPUT_AUDIO_MP4}\""
     ret_code, _ = run_os_command(cmd_str)
     if ret_code == 0:
         print(f"{OUTPUT_AUDIO_MP4} created")
     else:
         print(f"Failed to attach audio {audio_path} for {OUTPUT_MP4}")
-
-
-import argparse
-import concurrent.futures
 
 def process_one_media(i, media_file, sandbox_dir):
     supported_image_exts = (".jpg", ".jpeg")
@@ -123,10 +143,10 @@ def process_one_media(i, media_file, sandbox_dir):
     if media_file.lower().endswith(supported_image_exts):
         labeled_image_path = os.path.join(sandbox_dir, f"labeled_{i:03d}.jpg")
         add_meta(media_file, labeled_image_path)
-        cmd = f"ffmpeg -loop 1 -t {TIME_GAP} -i \"{labeled_image_path}\" -vf \"scale=7680:4320:force_original_aspect_ratio=decrease:eval=frame,pad=7680:4320:-1:-1:eval=frame\" -r 25 -c:v libx264 -pix_fmt yuv420p {segment_path}"
+        cmd = f"ffmpeg -loop 1 -t {TIME_GAP} -i \"{labeled_image_path}\" -vf \"scale=7680:4320:force_original_aspect_ratio=decrease:eval=frame,pad=7680:4320:-1:-1:eval=frame\" -r 25 -c:v libx264 -pix_fmt yuv420p \"{segment_path}\""
         run_os_command(cmd)
     else: # It's a video
-        cmd = f"ffmpeg -i \"{media_file}\" -vf \"scale=7680:4320:force_original_aspect_ratio=decrease:eval=frame,pad=7680:4320:-1:-1:eval=frame\" -r 25 -c:v libx264 -pix_fmt yuv420p -an {segment_path}"
+        cmd = f"ffmpeg -i \"{media_file}\" -vf \"scale=7680:4320:force_original_aspect_ratio=decrease:eval=frame,pad=7680:4320:-1:-1:eval=frame\" -r 25 -c:v libx264 -pix_fmt yuv420p -an \"{segment_path}\""
         run_os_command(cmd)
     return segment_path
 
@@ -142,7 +162,9 @@ def main():
     num_workers = args.workers
 
     sandbox_dir = f"{media_dir}/sandbox"
-    run_os_command(f"rm -rf {sandbox_dir}")
+    # Replaced rm -rf with shutil.rmtree
+    if os.path.exists(sandbox_dir):
+        shutil.rmtree(sandbox_dir)
     os.mkdir(sandbox_dir)
 
     # Get and sort all media files
@@ -181,8 +203,11 @@ def main():
                 f.write(f"file '{os.path.abspath(segment)}'\n")
 
     print("Concatenating video segments...")
-    run_os_command(f"rm -f {OUTPUT_MP4}")
-    concat_cmd = f"ffmpeg -f concat -safe 0 -i \"{concat_file_path}\" -c copy {OUTPUT_MP4}"
+    # Replaced rm -f with os.remove
+    if os.path.exists(OUTPUT_MP4):
+        os.remove(OUTPUT_MP4)
+    
+    concat_cmd = f"ffmpeg -f concat -safe 0 -i \"{concat_file_path}\" -c copy \"{OUTPUT_MP4}\""
     ret_code, output = run_os_command(concat_cmd)
     if ret_code != 0:
         print(f"Failed to concatenate videos. Error: {output}")
